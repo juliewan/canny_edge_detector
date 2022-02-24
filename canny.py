@@ -2,40 +2,34 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import ndimage
-from numba import jit
-import time
 import os
 
-# normalization constant is needed as the integral over the exponential function  is not unity
-# http://pages.stat.wisc.edu/~mchung/teaching/MIA/reading/diffusion.gaussian.kernel.pdf.pdf
-def norm(sigma):
-    return 1 / (np.sqrt(2 * np.pi) * sigma)
-
 # 1d gaussian equation
-def gaussian_1d(x, sigma):
+def gaussian_1d(x, sigma, deriv = 0):
+    # normalization constant is needed as the integral over the exponential function  is not unity
+    # http://pages.stat.wisc.edu/~mchung/teaching/MIA/reading/diffusion.gaussian.kernel.pdf.pdf
+    norm = 1 / (np.sqrt(2 * np.pi) * sigma)
+    term = np.exp(-x ** 2 * 0.5 / sigma ** 2)
     if (sigma == 0):
         return 0.0
-    return norm(sigma) * np.exp(-x ** 2 * 0.5 / sigma ** 2)
-
-# derivative 1d gaussian equation
-def gaussian_1d_deriv(x, sigma):
-    if (sigma == 0):
-        return 0.0
-    return -(x / (sigma ** 2)) * np.exp(-x ** 2 * 0.5 / sigma ** 2)
+    elif (deriv == 1):
+        return -(x / (sigma ** 2)) * term
+    else:
+        return norm * term
 
 # 1d gaussian kernel
-def kernel_1d(kernel_size, sigma, deriv=0):
+def kernel_1d(kernel_size, sigma, deriv = 0):
     kernel_1d = np.linspace(-kernel_size, kernel_size, kernel_size)
     if (deriv == 0):
         for i in range(kernel_size):
             kernel_1d[i] = gaussian_1d(kernel_1d[i], sigma)
     else:
         for i in range(kernel_size):
-            kernel_1d[i] = gaussian_1d_deriv(kernel_1d[i], sigma)
+            kernel_1d[i] = gaussian_1d(kernel_1d[i], sigma, deriv)
     return kernel_1d
 
 def conv_1d(image, kernel, axis, prime = 0):
-    conv_1d = ndimage.convolve1d(image, kernel, output=float, axis=axis)
+    conv_1d = ndimage.convolve1d(image, kernel, output = float, axis = axis)
 
     if (prime == 1):
         conv_1d *= 255.0 / conv_1d.max()
@@ -44,8 +38,7 @@ def conv_1d(image, kernel, axis, prime = 0):
 
 def magnitude(ix_prime, iy_prime):
     magnitude = np.sqrt(ix_prime ** 2 + iy_prime ** 2)
-    magnitude /= magnitude.max()
-    magnitude *= 255
+    magnitude /= magnitude.max() * 255
 
     return magnitude
 
@@ -54,32 +47,30 @@ def theta(ix_prime, iy_prime):
 
 # non-max suppression
 # classify pixel as edge if local maxima along direction of gradiant magnitude
-@jit(nopython=True)
 def non_max_suppression(image, grad_dir):
     rows, cols = image.shape
     nms = np.zeros((rows, cols))
 
     for row in range(1, rows - 1):
         for col in range(1, cols - 1):
-            direction = grad_dir[row, col]
             before_pixel = []
             after_pixel = []
 
             # compare east and west pixels
-            if (0 <= direction < np.pi / 8) or (7 * np.pi / 8 <= direction < 9 * np.pi / 8) or (
-                    15 * np.pi / 8 <= direction < np.pi):
+            if (0 <= grad_dir[row, col] < np.pi / 8) or (7 * np.pi / 8 <= grad_dir[row, col] < 9 * np.pi / 8) or (
+                    15 * np.pi / 8 <= grad_dir[row, col] < np.pi):
                 before_pixel = image[row, col - 1]
                 after_pixel = image[row, col + 1]
             # compare north east and south west pixels
-            elif (np.pi / 8 <= direction < 3 * np.pi / 8) or (9 * np.pi / 8 <= direction < 11 * np.pi / 8):
+            elif (np.pi / 8 <= grad_dir[row, col] < 3 * np.pi / 8) or (9 * np.pi / 8 <= grad_dir[row, col] < 11 * np.pi / 8):
                 before_pixel = image[row + 1, col - 1]
                 after_pixel = image[row - 1, col + 1]
             # compare north and south pixels
-            elif (3 * np.pi / 8 <= direction < 5 * np.pi / 8) or (11 * np.pi / 8 <= direction < 13 * np.pi / 8):
+            elif (3 * np.pi / 8 <= grad_dir[row, col] < 5 * np.pi / 8) or (11 * np.pi / 8 <= grad_dir[row, col] < 13 * np.pi / 8):
                 before_pixel = image[row - 1, col]
                 after_pixel = image[row + 1, col]
             # compare north west and south east pixels
-            elif (5 * np.pi / 8 <= direction < 7 * np.pi / 8) or (13 * np.pi / 8 <= direction < 15 * np.pi / 8):
+            elif (5 * np.pi / 8 <= grad_dir[row, col] < 7 * np.pi / 8) or (13 * np.pi / 8 <= grad_dir[row, col] < 15 * np.pi / 8):
                 before_pixel = image[row - 1, col - 1]
                 after_pixel = image[row + 1, col + 1]
 
@@ -132,11 +123,11 @@ def load_image(path, filename):
 
     return image
 
-def save_image(save_path, filename, image, save_name):
+def save_image(path, filename, image, save_name):
     cmap = plt.cm.gist_gray
     norm = plt.Normalize(vmin = image.min(), vmax = image.max())
     image = cmap(norm(image))
-    plt.imsave(save_path + filename.replace('.jpg', save_name) + '.jpg', image)
+    plt.imsave(path + filename.replace('.jpg', save_name) + '.jpg', image)
 
 def canny(path, filename, save = 0):
     image = load_image(path, filename)
@@ -168,10 +159,10 @@ def canny(path, filename, save = 0):
     hys = dbl_hys(nms)
 
     if(save == 1):
-        save_image(path, filename, image = ix, save_name='_ix')
-        save_image(path, filename, image = iy, save_name='_iy')
-        save_image(path, filename, image = ix_prime, save_name='_ix_prime')
-        save_image(path, filename, image = iy_prime, save_name='_iy_prime')
+        save_image(path, filename, image = ix, save_name = '_ix')
+        save_image(path, filename, image = iy, save_name = '_iy')
+        save_image(path, filename, image = ix_prime, save_name = '_ix_prime')
+        save_image(path, filename, image = iy_prime, save_name = '_iy_prime')
         save_image(path, filename, image = nms, save_name = '_nms')
         save_image(path, filename, image = hys, save_name = '_hys')
 
@@ -180,23 +171,10 @@ if __name__ == '__main__':
 
     path = '/follow/your/own/path/'
 
-    # numba jit offers modest speedup for subsequent runs after initial compilation
-    # keep jit function over nms if processing three or more images
-
-    compilation_image = 'compilation_image.jpg' # small image for initial program compilation
-
-    #start = time.time()
-    canny(path, compilation_image)
-    #end = time.time()
-    #print("compilation time: \t", round((end - start), 3), " s")
-
-    # apply canny edge detection to all images within a specified folder
+    # apply canny edge detection to *.jpg within folder and
+    # save intermediary processing results
     for filename in os.listdir(path):
         if filename.endswith('.jpg'):
-            #start = time.time()
             canny(path, filename, save = 1)
-            #end = time.time()
-            #print("execution time: \t", round((end - start), 3), " s")
-            continue
         else:
             continue
